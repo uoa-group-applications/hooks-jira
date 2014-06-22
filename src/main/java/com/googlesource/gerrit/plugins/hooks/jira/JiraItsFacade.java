@@ -17,23 +17,24 @@ package com.googlesource.gerrit.plugins.hooks.jira;
 import java.io.IOException;
 import java.net.URL;
 import java.rmi.RemoteException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.StringTokenizer;
 import java.util.concurrent.Callable;
 
+import com.atlassian.jira.rpc.soap.client.*;
+import com.google.gerrit.server.data.AccountAttribute;
 import org.apache.axis.AxisFault;
+import org.apache.commons.collections.CollectionUtils;
 import org.eclipse.jgit.lib.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.atlassian.jira.rpc.soap.client.RemoteAuthenticationException;
-import com.atlassian.jira.rpc.soap.client.RemoteComment;
-import com.atlassian.jira.rpc.soap.client.RemoteNamedObject;
-import com.atlassian.jira.rpc.soap.client.RemoteServerInfo;
 
 import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.inject.Inject;
 
-import com.googlesource.gerrit.plugins.hooks.its.InvalidTransitionException;
 import com.googlesource.gerrit.plugins.hooks.its.ItsFacade;
 
 public class JiraItsFacade implements ItsFacade {
@@ -51,6 +52,10 @@ public class JiraItsFacade implements ItsFacade {
 
   private JiraClient client;
   private JiraSession token;
+
+	public JiraItsFacade() {
+		this.pluginName = "ITS";
+	}
 
   @Inject
   public JiraItsFacade(@PluginName String pluginName,
@@ -106,45 +111,207 @@ public class JiraItsFacade implements ItsFacade {
   }
 
   @Override
-  public void performAction(final String issueKey, final String actionName)
+  public void performAction(final String issueKey, final AccountAttribute person, final String actionName)
       throws IOException {
 
     execute(new Callable<String>(){
       @Override
       public String call() throws Exception {
-        doPerformAction(issueKey, actionName);
+        doPerformAction(issueKey, person, actionName);
         return issueKey;
       }});
   }
 
-  private void doPerformAction(final String issueKey, final String actionName)
+	/**
+	 * A state transition is DestinationStatus[|Action|Action|Action]
+	 */
+	public static class FlowStateTransition {
+		final String status;
+		final List<String> actions = new ArrayList<>();
+
+		public FlowStateTransition(String flowAction) {
+			StringTokenizer st = new StringTokenizer(flowAction, "|");
+
+			status = st.nextToken();
+
+			while (st.hasMoreTokens()) {
+				actions.add(st.nextToken().toLowerCase());
+			}
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder sb = new StringBuilder(status);
+			for(String action : actions) {
+				sb.append("|").append(action);
+			}
+			return sb.toString();
+		}
+
+		public boolean hasActions() {
+			return actions.size() > 0;
+		}
+	}
+
+	public static class FlowTransition {
+		final String start;
+		final List<FlowStateTransition> steps = new ArrayList<>();
+
+		public FlowTransition(String start) {
+			this.start = start;
+		}
+
+		public boolean isEmpty() {
+			return steps.size() == 0;
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder sb = new StringBuilder("StartState: " + start);
+			for(FlowStateTransition step : steps) {
+				sb.append(", goes to -> ").append(step.toString());
+			}
+			return sb.toString();
+		}
+
+		public void addStep(String step) {
+			steps.add(new FlowStateTransition(step));
+		}
+	}
+
+	/**
+	 * This allows us to match a condition (e.g. a changeset was created) and be able to determine how to transition
+	 * the JIRA issue to where it needs to go, potentially setting recognized actions (e.g. Set-Assigned) in each position.
+	 *
+	 * Expected to be of the format:
+	 * ["CurrentStatus>DestinationStatus,CurrentStatus>DestinationStatus,CurrentStatus>Destination>Destination"]
+	 *
+	 * Once it has a status, it will go back and check to see if it can do any further transitions, so you would normally
+	 * compose transitions. E.g.
+	 *
+	 * ["Development Done>Review Doing|Set-Assigned,Development Doing>Development Done"]
+	 *
+	 * will allow it to find its current state is development doing, transition to development done, then see development
+	 * done can transition to Review Doing and set the assigned person to the appropriate incoming person.
+	 */
+	public static class FlowTransitions {
+		private Logger log = LoggerFactory.getLogger(getClass());
+
+		private List<FlowTransition> transitions = new ArrayList<>();
+
+		public boolean isEmpty() {
+			return transitions.size() == 0;
+		}
+
+		public String translateNextActionNameToId(RemoteNamedObject[] statuses, String name) {
+			for(RemoteNamedObject status : statuses) {
+				if (name.equals(status.getName())) {
+					return status.getId();
+				}
+			}
+
+			return null;
+		}
+
+		public FlowTransition findTransitionFlow(String status) {
+			for (FlowTransition flow : transitions) {
+				if (flow.start.equals(status)) {
+					return flow;
+				}
+			}
+
+			return null;
+		}
+
+		public FlowTransitions(String transition) {
+
+			StringTokenizer tokenizer = new StringTokenizer(transition, ",");
+			while (tokenizer.hasMoreTokens()) {
+				StringTokenizer flow = new StringTokenizer(tokenizer.nextToken(), ">");
+
+				FlowTransition trans = new FlowTransition(flow.nextToken());
+				while (flow.hasMoreTokens()) {
+					trans.addStep(flow.nextToken());
+				}
+
+				if (!trans.isEmpty()) {
+					transitions.add(trans);
+					log.info("jira transition found: " + trans.toString());
+				} else {
+					log.error("jira empty action found - no transitions " + transition);
+				}
+			}
+		}
+	}
+
+	public String translateStatusFromId(RemoteStatus[] statuses, String id) {
+		for(RemoteStatus status : statuses) {
+			if (id.equals(status.getId())) {
+				return status.getName();
+			}
+		}
+
+		return null;
+	}
+
+	public void doTransition(String transition, JiraClient client, JiraSession token, String issueKey, AccountAttribute person) throws RemoteException {
+		FlowTransitions flows = new FlowTransitions(transition);
+
+		if (!flows.isEmpty()) {
+
+			List<String> transitionsPassedThrough = new ArrayList<>();
+			boolean finished = false;
+
+			while (!finished) {
+				RemoteStatus[] statuses = client.service.getStatuses(token.getToken());
+
+				RemoteIssue issue = client.getIssue(token, issueKey);
+
+				// tells us what state we are in, so now we know what transitions we need to make next
+				FlowTransition flow = flows.findTransitionFlow(translateStatusFromId(statuses, issue.getStatus()));
+
+				if (flow != null) {
+					for(FlowStateTransition newAction : flow.steps) {
+						if (transitionsPassedThrough.contains(newAction.status)) {
+							log.error("transition " + transition + " has a cyclical status route in " + flow.toString());
+							finished = true;
+						} else {
+							RemoteNamedObject[] actions = client.getAvailableActions(token, issueKey);
+
+							String destinationId = flows.translateNextActionNameToId(actions, newAction.status);
+
+							if (destinationId != null) {
+
+								client.performAction(token, issueKey, destinationId);
+
+								if (newAction.hasActions()) {
+									if (newAction.actions.contains("set-assigned")) {
+										RemoteFieldValue[] param = new RemoteFieldValue[] { new RemoteFieldValue("assignee", new String[] {person.username }) };
+										log.info(String.format("jira performing transition on %s to %s assign to user %s", issueKey, newAction.status, person.username));
+										client.service.updateIssue(token.getToken(), issueKey, param);
+									}
+								} else {
+									log.info(String.format("jira performing transition on %s to %s", issueKey, newAction.status));
+
+								}
+								transitionsPassedThrough.add(newAction.status);
+							} else {
+								log.info("jira: Cannot transition to " + newAction + " on transition " + flow.toString());
+								finished = true;
+							}
+						}
+					}
+				} else {
+					finished = true;
+				}
+			}
+		}
+
+	}
+
+  private void doPerformAction(final String issueKey, final AccountAttribute person,  final String actionName)
       throws RemoteException, IOException {
-    String actionId = null;
-    RemoteNamedObject[] actions =
-        client().getAvailableActions(token, issueKey);
-    for (RemoteNamedObject action : actions) {
-      if (action.getName().equalsIgnoreCase(actionName)) {
-        actionId = action.getId();
-      }
-    }
-
-    if (actionId != null) {
-      log.debug("Executing action " + actionName + " on issue " + issueKey);
-      client().performAction(token, issueKey, actionId);
-    } else {
-      StringBuilder sb = new StringBuilder();
-      for (RemoteNamedObject action : actions) {
-        if (sb.length() > 0) sb.append(',');
-        sb.append('\'');
-        sb.append(action.getName());
-        sb.append('\'');
-      }
-
-      log.error("Action " + actionName
-          + " not found within available actions: " + sb);
-      throw new InvalidTransitionException("Action " + actionName
-          + " not executable on issue " + issueKey);
-    }
+	  doTransition(actionName, client(), token, issueKey, person);
   }
 
 

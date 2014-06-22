@@ -27,7 +27,7 @@ import com.atlassian.jira.rpc.soap.client.RemoteServerInfo;
 
 public class JiraClient {
 
-  private final JiraSoapService service;
+  protected final JiraSoapService service;
 
   public JiraClient(final String baseUrl) throws RemoteException {
     this(baseUrl, "/rpc/soap/jirasoapservice-v2");
