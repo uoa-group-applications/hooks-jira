@@ -2,7 +2,9 @@
 
 This is a non abandoned fork of hooks-jira designed specifically for our use at the University of Auckland
 doing Kanban. It primarily adds the ability to transition tickets in case they are not in the right place and
-allows actions to be taken on them, currently "Set-Assigned" and "Remove-Assigned".
+allows actions to be taken on them, currently "Set-Assigned" and "Unassign".
+
+You can download a build of this jar from my https://drive.google.com/folderview?id=0B2kixRhS_SOGOFMzeXNuWUktbUE&usp=sharing[Google Drive folder].
 
 Actions are stored in your +etc/issue-state-transition.config+ file. They react as per the normal documentation,
 however the actions are specified differently.
@@ -37,7 +39,8 @@ In our workflow, we typically have these situations:
 * Patchset fails review (-1, 0, +1), moved ticket to +Development Doing+
 * Patchset bomb, move ticket to +Design Doing+
 
-This turns up as
+This turns up as follows. The action for a New Draft and Restored turned out to be the same so I had to override
+hooks-its trying to denormalise them.
 
 ----
 [action "Open>Design Doing,Design Doing>Design Done,Design Done>Development Doing,Development Doing>Development Done|Unassign"]
