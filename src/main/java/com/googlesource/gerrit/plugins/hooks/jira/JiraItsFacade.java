@@ -285,9 +285,17 @@ public class JiraItsFacade implements ItsFacade {
 								client.performAction(token, issueKey, destinationId);
 
 								if (newAction.hasActions()) {
+									RemoteFieldValue[] param = null;
+
 									if (newAction.actions.contains("set-assigned")) {
-										RemoteFieldValue[] param = new RemoteFieldValue[] { new RemoteFieldValue("assignee", new String[] {person.username }) };
+										param = new RemoteFieldValue[] { new RemoteFieldValue("assignee", new String[] {person.username }) };
 										log.info(String.format("jira performing transition on %s to %s assign to user %s", issueKey, newAction.status, person.username));
+									} else if (newAction.actions.contains("unassign")) {
+										param = new RemoteFieldValue[] { new RemoteFieldValue("assignee", new String[] {}) };
+										log.info(String.format("jira performing transition on %s to %s unassign user", issueKey, newAction.status));
+									}
+
+									if (param != null) {
 										client.service.updateIssue(token.getToken(), issueKey, param);
 									}
 								} else {
