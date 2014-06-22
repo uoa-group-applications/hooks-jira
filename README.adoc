@@ -29,12 +29,46 @@ It will query the current status and find it is in +Development Doing+. It can t
 
 In our workflow, we typically have these situations:
 
-* Review Patchset created, moved ticket to Development Done
-* Draft Patchset created, moved ticket to Development Doing
-* Reviewer starts reviewing patchset, moved ticket to Review Doing, assign to reviewer
-* Patchset +2'd, moved ticket to Review Done, unassign reviewer
-* Patchset merged, moved ticket to Merged
-* Patchset fails review (-1, 0, +1), moved ticket to DevelopmentDoing
-* Patchset bomb, move ticket to Design Doing
+* Review Patchset created, moved ticket to +Development Done+
+* Draft Patchset created, moved ticket to +Development Doing+
+* Reviewer starts reviewing patchset, moved ticket to +Review Doing+, assign to reviewer
+* Patchset +2'd, moved ticket to +Review Done+, unassign reviewer
+* Patchset merged, moved ticket to +Merged+
+* Patchset fails review (-1, 0, +1), moved ticket to +Development Doing+
+* Patchset bomb, move ticket to +Design Doing+
+
+This turns up as
+
+----
+[action "Open>Design Doing,Design Doing>Design Done,Design Done>Development Doing,Development Doing>Development Done|Unassign"]
+change=created
+status=new
+
+[action "Open>Design Doing,Design Doing>Design Done,Design Done>Development Doing|Set-Assigned"]
+change=created
+status=draft
+
+[action "Open>Design Doing,Design Doing>Design Done,Design Done>Development Doing,Development Doing>Development Done,Development Done>Review Doing|Set-Assigned"]
+change=reviewer-added
+
+[action "Development Doing>Development Done,Development Done>Review Doing,Review Doing>Review Done|Unassign"]
+code-review=+2
+
+[action "Review Done>Review Doing,Development Done>Development Doing|Unassign,Review Doing>Development Doing|Unassign"]
+code-review=-1,0,+1,-2
+
+[action "Review Done>Review Doing,Review Doing>Design Doing|Unassign"]
+code-review=-2
+
+[action "Development Done>Review Doing,Review Doing>Review Done,Review Done>Merged"]
+change=merged
+
+[action "Review Done>Review Doing,Review Doing>Design Done,Design Done>Design Doing, Design Doing>Open|Unassign,Development Done>Development Doing,Development Doing>Design Done"]
+change=abandoned
+
+[action "Design Doing>Design Done,Open>Design Doing,Design Done>Development Doing|Set-Assigned"]
+change=restored
+----
+
 
 

@@ -92,16 +92,17 @@ public class JiraItsFacade implements ItsFacade {
   @Override
   public void addComment(final String issueKey, final String comment) throws IOException {
 
-    execute(new Callable<String>(){
-      @Override
-      public String call() throws Exception {
-        log.debug("Adding comment " + comment + " to issue " + issueKey);
-        RemoteComment remoteComment = new RemoteComment();
-        remoteComment.setBody(comment);
-        client().addComment(token, issueKey, remoteComment);
-        log.debug("Added comment " + comment + " to issue " + issueKey);
-        return issueKey;
-      }});
+    execute(new Callable<String>() {
+	    @Override
+	    public String call() throws Exception {
+		    log.debug("Adding comment " + comment + " to issue " + issueKey);
+		    RemoteComment remoteComment = new RemoteComment();
+		    remoteComment.setBody(comment);
+		    client().addComment(token, issueKey, remoteComment);
+		    log.debug("Added comment " + comment + " to issue " + issueKey);
+		    return issueKey;
+	    }
+    });
   }
 
   @Override
@@ -132,10 +133,10 @@ public class JiraItsFacade implements ItsFacade {
 		public FlowStateTransition(String flowAction) {
 			StringTokenizer st = new StringTokenizer(flowAction, "|");
 
-			status = st.nextToken();
+			status = st.nextToken().trim();
 
 			while (st.hasMoreTokens()) {
-				actions.add(st.nextToken().toLowerCase());
+				actions.add(st.nextToken().trim().toLowerCase());
 			}
 		}
 
@@ -229,9 +230,9 @@ public class JiraItsFacade implements ItsFacade {
 			while (tokenizer.hasMoreTokens()) {
 				StringTokenizer flow = new StringTokenizer(tokenizer.nextToken(), ">");
 
-				FlowTransition trans = new FlowTransition(flow.nextToken());
+				FlowTransition trans = new FlowTransition(flow.nextToken().trim());
 				while (flow.hasMoreTokens()) {
-					trans.addStep(flow.nextToken());
+					trans.addStep(flow.nextToken().trim());
 				}
 
 				if (!trans.isEmpty()) {
@@ -255,12 +256,15 @@ public class JiraItsFacade implements ItsFacade {
 	}
 
 	public void doTransition(String transition, JiraClient client, JiraSession token, String issueKey, AccountAttribute person) throws RemoteException {
+		log.info("jira matched transition : " + transition);
+
 		FlowTransitions flows = new FlowTransitions(transition);
 
 		if (!flows.isEmpty()) {
 
 			List<String> transitionsPassedThrough = new ArrayList<>();
 			boolean finished = false;
+			boolean transitionOccured = false;
 
 			while (!finished) {
 				RemoteStatus[] statuses = client.service.getStatuses(token.getToken());
@@ -268,7 +272,9 @@ public class JiraItsFacade implements ItsFacade {
 				RemoteIssue issue = client.getIssue(token, issueKey);
 
 				// tells us what state we are in, so now we know what transitions we need to make next
-				FlowTransition flow = flows.findTransitionFlow(translateStatusFromId(statuses, issue.getStatus()));
+				String initialStatus = translateStatusFromId(statuses, issue.getStatus());
+				log.info(String.format("Initial status of %s is %s", issueKey, initialStatus));
+				FlowTransition flow = flows.findTransitionFlow(initialStatus);
 
 				if (flow != null) {
 					for(FlowStateTransition newAction : flow.steps) {
@@ -281,6 +287,9 @@ public class JiraItsFacade implements ItsFacade {
 							String destinationId = flows.translateNextActionNameToId(actions, newAction.status);
 
 							if (destinationId != null) {
+								transitionOccured = true;
+
+								log.info(String.format("jira transition %s to state %s", issueKey, newAction.status));
 
 								client.performAction(token, issueKey, destinationId);
 
@@ -313,7 +322,13 @@ public class JiraItsFacade implements ItsFacade {
 					finished = true;
 				}
 			}
+
+			if (!transitionOccured) {
+				log.error("Failed to transition, no states.");
+			}
 		}
+
+
 
 	}
 
