@@ -1,0 +1,40 @@
+= JIRA Integration in Gerrit
+
+This is a non abandoned fork of hooks-jira designed specifically for our use at the University of Auckland
+doing Kanban. It primarily adds the ability to transition tickets in case they are not in the right place and
+allows actions to be taken on them, currently "Set-Assigned" and "Remove-Assigned".
+
+Actions are stored in your +etc/issue-state-transition.config+ file. They react as per the normal documentation,
+however the actions are specified differently.
+
+Actions should be of the form:
+
++["CurrentStatus>DestinationStatus,CurrentStatus>DestinationStatus,CurrentStatus>Destination>Destination"]+
+
+It will ask  the ticket for its current status and check to see what states your list might wish to transition to and
+then ask the ticket what states it *can* transition to.
+
+Once it has transitioned, it will again ask the ticket for its current status and where it can transition to, then
+check your list and determine what to do. Once it runs out of transitions, it stops.
+
+Order of precedence is left to right.
+
++["Development Done>Review Doing|Set-Assigned,Development Doing>Development Done"]+
+
+It will query the current status and find it is in +Development Doing+. It can transition to +Design Done+,
++Development Done+ or +Closed+. It looks through the transitions, sees +Development Doing+ and migrates to
+ +Development Done+. Then it asks the ticket what its status is, and where it can move to, which includes +Review
+ Doing+. This matches the first option, so the status is set to +Review Doing+ and the current person (the reviewer
+ presumably) is set to the Assignee.
+
+In our workflow, we typically have these situations:
+
+* Review Patchset created, moved ticket to Development Done
+* Draft Patchset created, moved ticket to Development Doing
+* Reviewer starts reviewing patchset, moved ticket to Review Doing, assign to reviewer
+* Patchset +2'd, moved ticket to Review Done, unassign reviewer
+* Patchset merged, moved ticket to Merged
+* Patchset fails review (-1, 0, +1), moved ticket to DevelopmentDoing
+* Patchset bomb, move ticket to Design Doing
+
+
