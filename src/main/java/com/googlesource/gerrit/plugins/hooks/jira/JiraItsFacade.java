@@ -111,7 +111,12 @@ public class JiraItsFacade implements ItsFacade {
     addComment(issueKey, "Related URL: " + createLinkForWebui(relatedUrl.toExternalForm(), description));
   }
 
-  @Override
+	@Override
+	public void addRelatedLinkAndComment(String issueId, URL relatedURL, String description, String comment) throws IOException {
+		addComment(issueId, createLinkForWebui(relatedURL.toExternalForm(), description) + "\n" + comment);
+	}
+
+	@Override
   public void performAction(final String issueKey, final AccountAttribute person, final String actionName)
       throws IOException {
 
